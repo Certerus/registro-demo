@@ -1,0 +1,215 @@
+name: Desplegar Registro Demo
+description: Respaldo previo (§10), despliegue controlado (§11) y validación posterior (§11) por SSH/rsync.
+
+inputs:
+  ambiente:
+    description: staging | produccion
+    required: true
+  version:
+    description: Versión esperada (sin "v"), p. ej. 1.4.0
+    required: true
+  respaldo:
+    description: "'true' para respaldar el estado actual antes de desplegar"
+    default: "true"
+  motivo:
+    description: Texto para el resumen (p. ej. motivo de rollback)
+    default: ""
+  site_url:
+    required: true
+  plugins_dir:
+    description: Ruta absoluta a wp-content/plugins en el servidor
+    required: true
+  wp_dir:
+    description: Ruta absoluta a la instalación de WordPress (opcional, habilita respaldo de BD con WP-CLI)
+    default: ""
+  ssh_host:
+    required: true
+  ssh_port:
+    default: "22"
+  ssh_user:
+    required: true
+  ssh_key:
+    required: true
+  ssh_known_hosts:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Preparar conexión segura
+      shell: bash
+      env:
+        SSH_HOST: ${{ inputs.ssh_host }}
+        SSH_PORT: ${{ inputs.ssh_port }}
+        SSH_USER: ${{ inputs.ssh_user }}
+        SSH_KEY: ${{ inputs.ssh_key }}
+        SSH_KNOWN_HOSTS: ${{ inputs.ssh_known_hosts }}
+        SITE_URL: ${{ inputs.site_url }}
+        PLUGINS_DIR: ${{ inputs.plugins_dir }}
+      run: |
+        set -euo pipefail
+        for v in SSH_HOST SSH_USER SSH_KEY SSH_KNOWN_HOSTS SITE_URL PLUGINS_DIR; do
+          if [ -z "${!v}" ]; then
+            echo "::error::Falta configurar $v en el ambiente '${{ inputs.ambiente }}' (Settings › Environments)."
+            exit 1
+          fi
+        done
+        mkdir -p ~/.ssh && chmod 700 ~/.ssh
+        printf '%s\n' "$SSH_KEY" > ~/.ssh/despliegue && chmod 600 ~/.ssh/despliegue
+        printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts && chmod 644 ~/.ssh/known_hosts
+        cat > ~/.ssh/config <<EOF
+        Host destino
+          HostName ${SSH_HOST}
+          Port ${SSH_PORT:-22}
+          User ${SSH_USER}
+          IdentityFile ~/.ssh/despliegue
+          IdentitiesOnly yes
+          StrictHostKeyChecking yes
+        EOF
+        ssh destino 'echo "Conexión establecida con $(hostname)"'
+
+    - name: Respaldo previo del estado actual (§10)
+      id: respaldo
+      if: inputs.respaldo == 'true'
+      shell: bash
+      env:
+        AMBIENTE: ${{ inputs.ambiente }}
+        VERSION: ${{ inputs.version }}
+        PLUGINS_DIR: ${{ inputs.plugins_dir }}
+        WP_DIR: ${{ inputs.wp_dir }}
+      run: |
+        set -euo pipefail
+        ssh destino "AMBIENTE=$(printf %q "$AMBIENTE") VERSION=$(printf %q "$VERSION") PLUGINS_DIR=$(printf %q "$PLUGINS_DIR") WP_DIR=$(printf %q "$WP_DIR") bash -s" <<'REMOTO' | tee respaldo.log
+        set -euo pipefail
+        FECHA=$(date +%Y%m%d-%H%M%S)
+        DIR="$HOME/respaldos-cambios"
+        mkdir -p "$DIR" && chmod 700 "$DIR"
+        BASE="registro-demo-${AMBIENTE}-${FECHA}-antes-de-v${VERSION}"
+        if [ -d "$PLUGINS_DIR/registro-demo" ]; then
+          tar -czf "$DIR/$BASE.tar.gz" -C "$PLUGINS_DIR" registro-demo
+          ANTERIOR=$(sed -n 's/^[[:space:]]*\*[[:space:]]*Version:[[:space:]]*\([0-9.]*\).*/\1/p' "$PLUGINS_DIR/registro-demo/registro-demo.php" 2>/dev/null | head -1 || true)
+          echo "VERSION_ANTERIOR=${ANTERIOR:-desconocida}"
+          echo "ARCHIVOS=$BASE.tar.gz|$(du -h "$DIR/$BASE.tar.gz" | cut -f1)|$(sha256sum "$DIR/$BASE.tar.gz" | cut -c1-16)"
+        else
+          echo "VERSION_ANTERIOR=sin instalación previa"
+        fi
+        if [ -n "$WP_DIR" ] && command -v wp >/dev/null 2>&1; then
+          wp --path="$WP_DIR" db export "$DIR/$BASE.sql" --quiet
+          gzip -f "$DIR/$BASE.sql"
+          echo "ARCHIVOS=$BASE.sql.gz|$(du -h "$DIR/$BASE.sql.gz" | cut -f1)|$(sha256sum "$DIR/$BASE.sql.gz" | cut -c1-16)"
+        else
+          echo "NOTA=Base de datos no respaldada en este paso (sin WP_DIR o sin WP-CLI); verificar respaldo del hosting."
+        fi
+        find "$DIR" -type f -mtime +60 -delete
+        REMOTO
+        {
+          echo "### Respaldo previo (§10)"
+          echo ""
+          if grep -q '^ARCHIVOS=' respaldo.log; then
+            echo "| Archivo | Tamaño | SHA-256 (inicio) |"
+            echo "|---|---|---|"
+            grep '^ARCHIVOS=' respaldo.log | cut -d= -f2- | awk -F'|' '{print "| `~/respaldos-cambios/"$1"` | "$2" | `"$3"` |"}'
+          else
+            echo "No había instalación previa que respaldar (primer despliegue)."
+          fi
+          echo ""
+          echo "**Versión instalada antes del cambio:** $(grep '^VERSION_ANTERIOR=' respaldo.log | cut -d= -f2- || true)"
+          if grep -q '^NOTA=' respaldo.log; then grep '^NOTA=' respaldo.log | cut -d= -f2- | sed 's/^/> /'; fi
+          echo ""
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Despliegue controlado (§11)
+      shell: bash
+      env:
+        PLUGINS_DIR: ${{ inputs.plugins_dir }}
+      run: |
+        set -euo pipefail
+        ssh destino "mkdir -p $(printf %q "$PLUGINS_DIR/registro-demo")"
+        rsync -az --delete --delay-updates --itemize-changes \
+          registro-demo/ "destino:$PLUGINS_DIR/registro-demo/" | tee despliegue.log
+        echo "Archivos modificados: $(grep -c '^<' despliegue.log || true)"
+
+    - name: Asegurar plugin activo (WP-CLI, si está disponible)
+      if: inputs.wp_dir != ''
+      shell: bash
+      env:
+        WP_DIR: ${{ inputs.wp_dir }}
+      run: |
+        ssh destino "WP_DIR=$(printf %q "$WP_DIR") bash -s" <<'REMOTO'
+        if command -v wp >/dev/null 2>&1; then
+          wp --path="$WP_DIR" plugin is-active registro-demo || wp --path="$WP_DIR" plugin activate registro-demo
+        else
+          echo "WP-CLI no disponible; el plugin debe activarse desde el administrador de WordPress."
+        fi
+        REMOTO
+
+    - name: Validación posterior al despliegue (§11)
+      shell: bash
+      env:
+        SITE_URL: ${{ inputs.site_url }}
+        VERSION: ${{ inputs.version }}
+        AMBIENTE: ${{ inputs.ambiente }}
+      run: |
+        set -uo pipefail
+        URL="${SITE_URL%/}"
+        SALUD="$URL/?rest_route=/registro-demo/v1/salud"
+        OK=0
+        for intento in 1 2 3 4 5 6 7 8 9 10; do
+          CUERPO=$(curl -fsS --max-time 15 "$SALUD" 2>/dev/null || true)
+          ESTADO=$(echo "$CUERPO" | jq -r '.estado // empty' 2>/dev/null || true)
+          VERSION_SITIO=$(echo "$CUERPO" | jq -r '.version // empty' 2>/dev/null || true)
+          echo "Intento $intento: estado=${ESTADO:-sin respuesta} versión=${VERSION_SITIO:-n/d}"
+          if [ "$ESTADO" = "ok" ] && [ "$VERSION_SITIO" = "$VERSION" ]; then OK=1; break; fi
+          sleep 6
+        done
+        HOME_HTTP=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$URL/")
+
+        r() { [ "$1" = "1" ] && echo "✅ Correcto" || echo "❌ Falló"; }
+        {
+          echo "### Validación posterior (§11)"
+          echo ""
+          echo "| Verificación | Esperado | Obtenido | Resultado |"
+          echo "|---|---|---|---|"
+          echo "| Endpoint de salud | estado \`ok\` | \`${ESTADO:-sin respuesta}\` | $(r "$([ "$ESTADO" = ok ] && echo 1)") |"
+          echo "| Versión publicada | \`$VERSION\` | \`${VERSION_SITIO:-n/d}\` | $(r "$([ "$VERSION_SITIO" = "$VERSION" ] && echo 1)") |"
+          echo "| Página de inicio | HTTP 200 | HTTP $HOME_HTTP | $(r "$([ "$HOME_HTTP" = 200 ] && echo 1)") |"
+          echo ""
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        if [ "$OK" != "1" ] || [ "$HOME_HTTP" != "200" ]; then
+          if [ "$AMBIENTE" = "produccion" ]; then
+            echo "> ⚠️ **Validación fallida en producción.** El Responsable de TI debe evaluar la reversión (§12) con el workflow **Rollback**." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "> ⚠️ **Validación fallida en staging.** El cambio no puede promoverse: corregir, posponer o cancelar (§8)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "::error::La validación posterior al despliegue falló en $AMBIENTE."
+          exit 1
+        fi
+
+    - name: Registro del cambio (§14)
+      if: always()
+      shell: bash
+      env:
+        AMBIENTE: ${{ inputs.ambiente }}
+        VERSION: ${{ inputs.version }}
+        MOTIVO: ${{ inputs.motivo }}
+        SITE_URL: ${{ inputs.site_url }}
+      run: |
+        {
+          echo "### Registro del despliegue (§14)"
+          echo ""
+          echo "| Campo | Valor |"
+          echo "|---|---|"
+          echo "| Ambiente | \`$AMBIENTE\` |"
+          echo "| Sitio | $SITE_URL |"
+          echo "| Versión desplegada | \`v$VERSION\` |"
+          echo "| Commit | \`${GITHUB_SHA:0:7}\` |"
+          echo "| Referencia | \`$GITHUB_REF_NAME\` |"
+          echo "| Ejecutado por | @$GITHUB_ACTOR |"
+          echo "| Disparador | \`$GITHUB_EVENT_NAME\` |"
+          echo "| Fecha y hora | $(TZ=America/Mexico_City date '+%d/%m/%Y %H:%M:%S') (hora del centro de México) |"
+          [ -n "$MOTIVO" ] && echo "| Motivo | $MOTIVO |"
+          echo ""
+          echo "_La autorización previa de producción queda registrada en la sección **Deployments** del repositorio y en este mismo run._"
+        } >> "$GITHUB_STEP_SUMMARY"
+        rm -f ~/.ssh/despliegue

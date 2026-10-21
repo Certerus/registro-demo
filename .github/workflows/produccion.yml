@@ -1,0 +1,85 @@
+name: Producción
+
+# Se dispara al publicar un Release (etiqueta vX.Y.Z sobre main).
+# El job de despliegue usa el ambiente "produccion", que exige aprobación previa
+# del responsable del servicio o proyecto (§9). Sin aprobación, no hay despliegue.
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: produccion
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    name: Verificación previa a la liberación
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.valor }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: La etiqueta coincide con la versión del código
+        run: bash scripts/verificar-version.sh --etiqueta "${GITHUB_REF_NAME}"
+
+      - name: La versión proviene de main (código revisado y aprobado)
+        run: |
+          git fetch origin main
+          if git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "El commit ${GITHUB_SHA:0:7} forma parte de main."
+          else
+            echo "::error::La etiqueta ${GITHUB_REF_NAME} no apunta a un commit integrado en main mediante Pull Request."
+            exit 1
+          fi
+
+      - name: Versión
+        id: version
+        run: echo "valor=$(bash scripts/verificar-version.sh --imprimir)" >> "$GITHUB_OUTPUT"
+
+      - name: Resumen
+        run: |
+          {
+            echo "### Solicitud de liberación a producción"
+            echo ""
+            echo "- Release: **${{ github.event.release.name || github.ref_name }}** ($GITHUB_REF_NAME)"
+            echo "- Publicado por: @${{ github.event.release.author.login }}"
+            echo "- Commit: \`${GITHUB_SHA:0:7}\` (integrado en main)"
+            echo ""
+            echo "⏳ El despliegue queda **en espera de autorización** del responsable del servicio o proyecto (§9)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  produccion:
+    name: Despliegue en producción
+    needs: verificar
+    runs-on: ubuntu-latest
+    environment:
+      name: produccion
+      url: ${{ vars.SITE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Respaldar, desplegar y validar
+        uses: ./.github/actions/desplegar
+        with:
+          ambiente: produccion
+          version: ${{ needs.verificar.outputs.version }}
+          respaldo: "true"
+          motivo: ${{ format('Release {0}', github.ref_name) }}
+          site_url: ${{ vars.SITE_URL }}
+          plugins_dir: ${{ vars.PLUGINS_DIR }}
+          wp_dir: ${{ vars.WP_DIR }}
+          ssh_host: ${{ secrets.SSH_HOST }}
+          ssh_port: ${{ secrets.SSH_PORT }}
+          ssh_user: ${{ secrets.SSH_USER }}
+          ssh_key: ${{ secrets.SSH_PRIVATE_KEY }}
+          ssh_known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}

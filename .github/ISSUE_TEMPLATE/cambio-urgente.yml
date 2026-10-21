@@ -1,0 +1,59 @@
+name: Cambio urgente
+description: Cambio derivado de un incidente, vulnerabilidad o riesgo relevante (§13). Reduce tiempos, no elimina controles.
+title: "[Urgente] "
+labels: ["solicitud", "urgente", "pendiente-analisis"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Cambio urgente (§13).** La urgencia puede reducir los tiempos del proceso, pero **no elimina** la autorización previa
+        del responsable del servicio o proyecto para afectar producción, ni el respaldo, las pruebas y la trazabilidad.
+
+  - type: dropdown
+    id: origen
+    attributes:
+      label: Origen
+      options:
+        - Incidente en producción
+        - Vulnerabilidad de seguridad
+        - Riesgo operativo relevante
+    validations:
+      required: true
+
+  - type: input
+    id: solicitante
+    attributes:
+      label: Solicitante / quien reporta
+    validations:
+      required: true
+
+  - type: textarea
+    id: impacto
+    attributes:
+      label: Impacto actual
+      description: ¿Qué está fallando y a quién afecta? (sin datos sensibles ni detalles explotables)
+    validations:
+      required: true
+
+  - type: textarea
+    id: correccion
+    attributes:
+      label: Corrección propuesta
+    validations:
+      required: true
+
+  - type: textarea
+    id: criterios
+    attributes:
+      label: Criterios de aceptación
+      placeholder: "- [ ] ..."
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmacion
+    attributes:
+      label: Confirmación
+      options:
+        - label: Esta solicitud no contiene secretos, credenciales ni datos personales.
+          required: true

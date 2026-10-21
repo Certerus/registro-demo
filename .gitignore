@@ -1,0 +1,10 @@
+/vendor/
+/.phpunit.cache/
+reporte-pruebas.xml
+.DS_Store
+.env
+*.pem
+*.key
+id_ed25519*
+respaldo.log
+despliegue.log

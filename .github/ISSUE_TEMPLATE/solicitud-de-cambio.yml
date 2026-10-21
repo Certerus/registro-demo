@@ -1,0 +1,83 @@
+name: Solicitud de cambio
+description: Registrar un requerimiento, corrección o mejora (Etapa 1 del procedimiento de gestión de cambios).
+title: "[Cambio] "
+labels: ["solicitud", "pendiente-analisis"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Procedimiento de gestión de cambios – Etapa 1: Solicitud.**
+        Todo cambio relevante debe relacionarse con una solicitud registrada (principio de trazabilidad).
+        No incluyas contraseñas, tokens, datos personales ni configuraciones sensibles.
+
+  - type: dropdown
+    id: tipo
+    attributes:
+      label: Tipo de cambio
+      options:
+        - Mejora
+        - Corrección
+        - Nuevo requerimiento
+        - Configuración
+    validations:
+      required: true
+
+  - type: input
+    id: solicitante
+    attributes:
+      label: Solicitante
+      description: Nombre y área o cliente que solicita el cambio.
+      placeholder: "Ej. Laura Méndez – Coordinación de servicio, Cliente Demo S.A. de C.V."
+    validations:
+      required: true
+
+  - type: input
+    id: servicio
+    attributes:
+      label: Servicio o proyecto afectado
+      value: "Registro Demo"
+    validations:
+      required: true
+
+  - type: textarea
+    id: descripcion
+    attributes:
+      label: Descripción del cambio
+      description: ¿Qué se necesita?
+    validations:
+      required: true
+
+  - type: textarea
+    id: justificacion
+    attributes:
+      label: Justificación o necesidad
+      description: ¿Por qué se necesita? ¿Qué problema resuelve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: criterios
+    attributes:
+      label: Criterios de aceptación
+      description: ¿Cómo sabremos que el cambio funciona correctamente?
+      placeholder: "- [ ] ...\n- [ ] ..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: prioridad
+    attributes:
+      label: Prioridad solicitada
+      options:
+        - Normal
+        - Alta
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmacion
+    attributes:
+      label: Confirmación
+      options:
+        - label: Esta solicitud no contiene secretos, credenciales ni datos personales.
+          required: true

@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pruebas:
+    name: Pruebas automatizadas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          tools: composer
+
+      - name: Verificar sintaxis PHP
+        run: find registro-demo tests -name '*.php' -print0 | xargs -0 -n1 php -l
+
+      - name: Verificar versión identificable (§7)
+        run: bash scripts/verificar-version.sh
+
+      - name: Buscar secretos en texto plano (§7)
+        run: bash scripts/buscar-secretos.sh
+
+      - name: Instalar dependencias de prueba
+        run: composer install --no-interaction --no-progress
+
+      - name: Pruebas unitarias
+        run: vendor/bin/phpunit --testdox --log-junit reporte-pruebas.xml
+
+      - name: Resumen de pruebas (§8)
+        if: always()
+        run: |
+          {
+            echo "### Pruebas automatizadas (§8)"
+            echo ""
+            if [ -f reporte-pruebas.xml ]; then
+              T=$(grep -o 'tests="[0-9]*"' reporte-pruebas.xml | head -1 | grep -o '[0-9]*')
+              F=$(grep -o 'failures="[0-9]*"' reporte-pruebas.xml | head -1 | grep -o '[0-9]*')
+              E=$(grep -o 'errors="[0-9]*"' reporte-pruebas.xml | head -1 | grep -o '[0-9]*')
+              echo "| Pruebas | Fallas | Errores |"
+              echo "|---|---|---|"
+              echo "| ${T:-0} | ${F:-0} | ${E:-0} |"
+            else
+              echo "No se generó reporte de pruebas."
+            fi
+            echo ""
+            echo "Versión del código: \`$(bash scripts/verificar-version.sh --imprimir 2>/dev/null || echo 'inconsistente')\` · Commit \`${GITHUB_SHA:0:7}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Conservar evidencia de pruebas
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reporte-pruebas
+          path: reporte-pruebas.xml
+          if-no-files-found: ignore
+          retention-days: 90

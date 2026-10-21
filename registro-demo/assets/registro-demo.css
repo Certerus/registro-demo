@@ -1,0 +1,23 @@
+.registro-demo__tabla {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 15px;
+}
+
+.registro-demo__tabla th,
+.registro-demo__tabla td {
+	padding: 10px 12px;
+	border-bottom: 1px solid #e5e7eb;
+	text-align: left;
+}
+
+.registro-demo__tabla th {
+	background: #f3f4f6;
+	font-weight: 600;
+}
+
+.registro-demo__version {
+	margin-top: 8px;
+	font-size: 12px;
+	color: #6b7280;
+}

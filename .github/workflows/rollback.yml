@@ -1,0 +1,97 @@
+name: Rollback
+
+# Reversión a una versión estable previamente liberada (§12).
+# La decisión operativa corresponde al Responsable de TI. El despliegue usa el
+# ambiente "produccion", por lo que también queda sujeto a autorización registrada.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versión estable a restaurar (etiqueta existente, p. ej. v1.3.0)"
+        required: true
+      motivo:
+        description: "Motivo de la reversión"
+        required: true
+      registro:
+        description: "Número de la solicitud o incidente relacionado (p. ej. 12)"
+        required: false
+
+concurrency:
+  group: produccion
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    name: Verificar versión objetivo
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.valor }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: La etiqueta existe y corresponde a una versión liberada
+        env:
+          ETIQUETA: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$ETIQUETA" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Formato inválido: $ETIQUETA (esperado vX.Y.Z)"; exit 1; }
+          git rev-parse -q --verify "refs/tags/$ETIQUETA" >/dev/null || { echo "::error::No existe la etiqueta $ETIQUETA"; exit 1; }
+          git checkout -q "$ETIQUETA"
+          bash scripts/verificar-version.sh --etiqueta "$ETIQUETA"
+
+      - name: Versión
+        id: version
+        env:
+          ETIQUETA: ${{ inputs.version }}
+        run: echo "valor=${ETIQUETA#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Resumen de la solicitud de reversión
+        env:
+          ETIQUETA: ${{ inputs.version }}
+          MOTIVO: ${{ inputs.motivo }}
+          REGISTRO: ${{ inputs.registro }}
+        run: |
+          {
+            echo "### Solicitud de rollback (§12)"
+            echo ""
+            echo "- Versión objetivo: **$ETIQUETA**"
+            echo "- Motivo: $MOTIVO"
+            [ -n "$REGISTRO" ] && echo "- Registro relacionado: #$REGISTRO"
+            echo "- Solicitado por: @$GITHUB_ACTOR"
+            echo ""
+            echo "⏳ En espera de autorización para afectar producción."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  rollback:
+    name: Reversión en producción
+    needs: verificar
+    runs-on: ubuntu-latest
+    environment:
+      name: produccion
+      url: ${{ vars.SITE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version }}
+
+      - name: Respaldar, restaurar y validar
+        uses: ./.github/actions/desplegar
+        with:
+          ambiente: produccion
+          version: ${{ needs.verificar.outputs.version }}
+          respaldo: "true"
+          motivo: ${{ format('Rollback a {0} – {1}', inputs.version, inputs.motivo) }}
+          site_url: ${{ vars.SITE_URL }}
+          plugins_dir: ${{ vars.PLUGINS_DIR }}
+          wp_dir: ${{ vars.WP_DIR }}
+          ssh_host: ${{ secrets.SSH_HOST }}
+          ssh_port: ${{ secrets.SSH_PORT }}
+          ssh_user: ${{ secrets.SSH_USER }}
+          ssh_key: ${{ secrets.SSH_PRIVATE_KEY }}
+          ssh_known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}

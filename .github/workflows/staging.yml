@@ -1,0 +1,48 @@
+name: Staging
+
+# Cada Pull Request se despliega y valida en el ambiente de pruebas ANTES de poder
+# integrarse a main (Etapa 5 · §6 · §8). Este check es obligatorio en la regla de main.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+concurrency:
+  group: staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  staging:
+    name: Despliegue y validación en staging
+    # Los PR desde forks no reciben secretos; solo se despliegan PR del propio repositorio.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ vars.SITE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Identificar versión del cambio
+        id: version
+        run: echo "valor=$(bash scripts/verificar-version.sh --imprimir)" >> "$GITHUB_OUTPUT"
+
+      - name: Desplegar y validar en staging
+        uses: ./.github/actions/desplegar
+        with:
+          ambiente: staging
+          version: ${{ steps.version.outputs.valor }}
+          respaldo: "false"
+          motivo: "${{ github.event.pull_request.title && format('PR #{0}: {1}', github.event.pull_request.number, github.event.pull_request.title) || 'Despliegue manual' }}"
+          site_url: ${{ vars.SITE_URL }}
+          plugins_dir: ${{ vars.PLUGINS_DIR }}
+          wp_dir: ${{ vars.WP_DIR }}
+          ssh_host: ${{ secrets.SSH_HOST }}
+          ssh_port: ${{ secrets.SSH_PORT }}
+          ssh_user: ${{ secrets.SSH_USER }}
+          ssh_key: ${{ secrets.SSH_PRIVATE_KEY }}
+          ssh_known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}

@@ -1,0 +1,11 @@
+# Notas de versión generadas automáticamente, agrupadas por tipo de cambio.
+changelog:
+  categories:
+    - title: Cambios urgentes
+      labels: [urgente]
+    - title: Mejoras
+      labels: [mejora]
+    - title: Correcciones
+      labels: [correccion]
+    - title: Otros cambios
+      labels: ["*"]

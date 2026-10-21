@@ -1,0 +1,14 @@
+{
+	"name": "mentor-demo/registro-demo",
+	"description": "Plugin de demostración para el ejercicio de gestión de cambios",
+	"type": "wordpress-plugin",
+	"license": "GPL-2.0-or-later",
+	"require-dev": {
+		"phpunit/phpunit": "^10.5"
+	},
+	"config": {
+		"platform": {
+			"php": "8.2"
+		}
+	}
+}
